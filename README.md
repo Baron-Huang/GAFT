@@ -1,6 +1,6 @@
-# A Mechanistically Interpretable Pan-squamous Pathology Large World-model Reveals Conserved Differentiation Trajectories Across Human Cancers
+# Graph Adversarial Fusion Transformer for Topology-aware Tumor–Microenvironment Interaction Modeling in SCC
 ## 🧔: Authors [*Corresponding author]
-- Pan Huang, Chentao Li*, and Jing Qin*
+-  Pan Huang, Member, IEEE, Yingbo Qu, Peng He, Francesco Mercaldo, Antonella Santone, and Peng Feng, Member, IEEE
 
 ## :fire: News
 
