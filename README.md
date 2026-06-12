@@ -1,6 +1,6 @@
 # Graph Adversarial Fusion Transformer for Topology-aware Tumor–Microenvironment Interaction Modeling in SCC
 ## 🧔: Authors [*Corresponding author]
--  Pan Huang, Member, IEEE, Yingbo Qu, Peng He, Francesco Mercaldo, Antonella Santone, and Peng Feng, Member, IEEE
+-  Pan Huang, Yingbo Qu, Peng He, Francesco Mercaldo, Antonella Santone, and Peng Feng*
 
 ## :fire: News
 
@@ -10,7 +10,7 @@
 
 ## :rocket: Pipeline
 
-Here's an overview of our **Mechanistically Interpretable Pan-squamous Pathology Large World-model (SquaPLW)** method:
+Here's an overview of our **Graph Adversarial Fusion Transformer (GAFT)** method:
 
 ![Figure 1](./images/xxx.jpg)
 
@@ -30,12 +30,12 @@ Here's an overview of our **Mechanistically Interpretable Pan-squamous Pathology
 
 ## 🛠️ Getting Started
 
-To get started with **LSSO-ISC**, follow the installation instructions below.
+To get started with **GAFT**, follow the installation instructions below.
 
 1.  Clone the repo
 
 ```sh
-git clone https://github.com/Prince-Lee-PathAI/HCF-MIL
+git clone https://github.com/Baron-Huang/GAFT
 ```
 
 2. Install dependencies
@@ -46,25 +46,25 @@ pip install -r requirements.txt
 
 3. Training on Swin Transformer-S Backbone
 ```sh
-sh run_swinT.sh
+sh GAFT.sh
 Modify: --abla_type sota --run_mode train --random_seed ${seed}
 ```
 
 4. Evaluation
 ```sh
-sh run_swinT.sh
+sh GAFT.sh
 Modify: --abla_type sota --run_mode test --random_seed ${seed}
 ```
 
 5. Extract features for plots
 ```sh
-sh run_swinT.sh
+sh GAFT.sh
 Modify: --abla_type sota --run_mode test --random_seed ${seed} --feat_extract
 ```
 
 6. Interpretability plots
 ```sh
-sh run_swinT.sh
+sh GAFT.sh
 Modify: --abla_type sota --run_mode test --random_seed ${seed} --bag_weight
 ```
 
