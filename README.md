@@ -12,7 +12,7 @@
 
 Here's an overview of our **Graph Adversarial Fusion Transformer (GAFT)** method:
 
-![Figure 1](./Image/Fig_4.jpg)
+<img src="./Image/Fig_4.jpg" alt="Figure 1" width="70%">
 
 
 
