@@ -12,7 +12,7 @@
 
 Here's an overview of our **Graph Adversarial Fusion Transformer (GAFT)** method:
 
-![Figure 1](./Image/Figure_4.jpg)
+![Figure 1](./Image/Fig_4.jpg)
 
 
 
