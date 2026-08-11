@@ -9,7 +9,7 @@
 1. Here's an overview of our **GAFT** method:
 
 <div align=center>
-<img src="https://github.com/Baron-Huang/GAFT/tree/master/Images/Fig_4.jpg">
+![Figure 1](./Images/Fig_4.jpg)
 </div>
 
 
