@@ -9,7 +9,7 @@
 1. Here's an overview of our **GAFT** method:
 
 <div align=center>
-<img src="https://github.com/Baron-Huang/GAFT/tree/master/Images/Fig_4.jpg" style="width:70%; height:70%;">
+<img src="https://github.com/Baron-Huang/GAFT/tree/master/Images/Fig_4.jpg">
 </div>
 
 
