@@ -7,10 +7,8 @@
 
 ## :rocket: Pipeline
 1. Here's an overview of our **GAFT** method:
-
-<div align=center>
 ![Figure 1](./Images/Fig_4.jpg)
-</div>
+
 
 
 ## :mag: TODO
