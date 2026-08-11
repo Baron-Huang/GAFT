@@ -1,11 +1,9 @@
-# Instance Gradient-entropy Inhibition-optimized Prior-guiding Actively Explainable Clustering for Achieving Pathologist-like Grading
+# Graph Adversarial Fusion Transformer for Topology-aware Tumor-Microenvironment Interaction Modeling in LSCC
 ## 🧔 Authors [* is corresponding authors]
 - xxxx
 
 ## :fire: News
 - [xxxx/xx/xxx] xxxx.
-
-
 
 ## :rocket: Pipeline
 1. Here's an overview of our **GAFT** method:
