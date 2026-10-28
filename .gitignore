@@ -1,0 +1,22 @@
+# Python bytecode and build artefacts
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+build/
+dist/
+*.egg-info/
+
+# IDE settings
+.idea/
+.vscode/
+
+# Trained model weights and generated outputs
+*.pth
+*.pt
+*.ckpt
+Results/
+Weights/
+
+# Local datasets
+Datasets/
