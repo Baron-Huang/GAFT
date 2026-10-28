@@ -1,11 +1,33 @@
+import os
 import torch
 import numpy as np
 import random
 import sys
 import time
 from torch import nn
-from sklearn.metrics import accuracy_score, classification_report, roc_curve, accuracy_score, roc_auc_score, matthews_corrcoef, cohen_kappa_score
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, roc_curve, accuracy_score, roc_auc_score, matthews_corrcoef, cohen_kappa_score
 import torch.nn.functional as F
+
+
+def confusion_matrix_metrics(y_true, y_pred, labels):
+	"""Return the confusion matrix and per-class metrics derived from it."""
+	matrix = confusion_matrix(y_true, y_pred, labels=labels)
+	total = int(matrix.sum())
+	rows = ['Class  TP  FP  FN  TN  Sensitivity  Specificity  Precision  F1-score']
+	for class_index, label in enumerate(labels):
+		true_positive = int(matrix[class_index, class_index])
+		false_positive = int(matrix[:, class_index].sum() - true_positive)
+		false_negative = int(matrix[class_index, :].sum() - true_positive)
+		true_negative = total - true_positive - false_positive - false_negative
+		sensitivity = true_positive / (true_positive + false_negative) if true_positive + false_negative else 0.0
+		specificity = true_negative / (true_negative + false_positive) if true_negative + false_positive else 0.0
+		precision = true_positive / (true_positive + false_positive) if true_positive + false_positive else 0.0
+		f1_score = 2 * precision * sensitivity / (precision + sensitivity) if precision + sensitivity else 0.0
+		rows.append(
+			f'{label:<5}  {true_positive:<2}  {false_positive:<2}  {false_negative:<2}  {true_negative:<2}  '
+			f'{sensitivity:.4f}       {specificity:.4f}       {precision:.4f}   {f1_score:.4f}'
+		)
+	return matrix, '\n'.join(rows)
 from loss_funcs import adv, daan, coral, bnm, mmd, lmmd
 from sklearn.linear_model import LinearRegression
 import torch.nn.functional as F
@@ -1399,13 +1421,13 @@ def train_moo_dis_lmmd(number=None, net=None, train_loader=None, val_loader=None
 				{'params': net.block_10.parameters(), 'lr': cnn_lr_schedule(i)},
 				{'params': net.block_11.parameters(), 'lr': cnn_lr_schedule(i)},
 
-				{'params': net.patch_embed.parameters(), 'lr': vit_lr_schedule(i)},
-				{'params': net.layers_0.parameters(), 'lr': vit_lr_schedule(i)},
-				{'params': net.layers_1.parameters(), 'lr': vit_lr_schedule(i)},
-				{'params': net.layers_2.parameters(), 'lr': vit_lr_schedule(i)},
-				{'params': net.layers_3.parameters(), 'lr': vit_lr_schedule(i)},
-				{'params': net.norm.parameters(), 'lr': vit_lr_schedule(i)},
-				{'params': net.head.parameters(), 'lr': vit_lr_schedule(i)},
+				{'params': net.patch_embed.parameters(), 'lr': vit_lr_greece_larynx(i)},
+				{'params': net.layers_0.parameters(), 'lr': vit_lr_greece_larynx(i)},
+				{'params': net.layers_1.parameters(), 'lr': vit_lr_greece_larynx(i)},
+				{'params': net.layers_2.parameters(), 'lr': vit_lr_greece_larynx(i)},
+				{'params': net.layers_3.parameters(), 'lr': vit_lr_greece_larynx(i)},
+				{'params': net.norm.parameters(), 'lr': vit_lr_greece_larynx(i)},
+				{'params': net.head.parameters(), 'lr': vit_lr_greece_larynx(i)},
 
 				{'params': net.swin_fc1.parameters(), 'lr': vit_lr_for_breast_schedule(i)},
 				{'params': net.swin_fc2.parameters(), 'lr': vit_lr_for_breast_schedule(i)},
@@ -1702,188 +1724,99 @@ def train_moo_dis_euclidean(number=None, net=None, train_loader=None, val_loader
 	return test_Fusion_acc
 
 
-def testing_funnction(test_model = None, train_loader=None, val_loader=None, test_loader=None, gpu_device=0,
-					  out_mode = None):
-	loss_fn = nn.CrossEntropyLoss()
-	test_model.eval()
-	train_acc = []
-	for train_img, train_label in train_loader:
-		train_img = train_img.cuda(gpu_device)
-		train_label = train_label.cuda(gpu_device)
-		with torch.no_grad():
-			if out_mode == 'single':
-				train_pre_y = test_model(train_img)
-			elif out_mode == 'triplet':
-				_, _, train_pre_y = test_model(train_img)
-			elif out_mode == 'five':
-				_, _, train_pre_y,_,_ = test_model(train_img)
-			train_pre_label = torch.argmax(train_pre_y, dim=1)
-			train_acc.append(accuracy_score(train_label.detach().cpu().numpy(),
-											train_pre_label.detach().cpu().numpy()))
+def testing_funnction(test_model=None, train_loader=None, val_loader=None, test_loader=None,
+                      gpu_device=0, out_mode=None, weight_path=None, log_path=None):
+	"""Evaluate GAFT and persist classification, confusion-matrix, and AUC metrics."""
+	def _forward(images):
+		if out_mode == 'single':
+			return test_model(images)
+		if out_mode == 'triplet':
+			_, _, outputs = test_model(images)
+			return outputs
+		if out_mode == 'five':
+			_, _, outputs, _, _ = test_model(images)
+			return outputs
+		raise ValueError(f'Unsupported out_mode: {out_mode!r}')
 
-	val_acc = []
-	val_all_label = np.zeros(1)
-	val_all_pre_label = np.zeros(1)
-	for val_img, val_label in val_loader:
-		val_img = val_img.cuda(gpu_device)
-		val_label = val_label.cuda(gpu_device)
-		with torch.no_grad():
-			if out_mode == 'single':
-				val_pre_y = test_model(val_img)
-			elif out_mode == 'triplet':
-				_, _, val_pre_y = test_model(val_img)
-			elif out_mode == 'five':
-				_, _, val_pre_y,_,_ = test_model(val_img)
-			val_loss = loss_fn(val_pre_y, val_label)
-			val_pre_label = torch.argmax(val_pre_y, dim=1)
-			val_acc.append(accuracy_score(val_label.detach().cpu().numpy(),
-										  val_pre_label.detach().cpu().numpy()))
-			val_all_label = np.concatenate((val_all_label, val_label.detach().cpu().numpy()))
-			val_all_label = val_all_label[1:]
-			val_all_pre_label = np.concatenate((val_all_pre_label, val_pre_label.detach().cpu().numpy()))
-			val_all_pre_label = val_all_pre_label[1:]
+	def _mean_accuracy(loader):
+		accuracies = []
+		for images, labels in loader:
+			images = images.cuda(gpu_device)
+			labels = labels.cuda(gpu_device)
+			with torch.no_grad():
+				predictions = torch.argmax(_forward(images), dim=1)
+			accuracies.append(accuracy_score(labels.detach().cpu().numpy(), predictions.detach().cpu().numpy()))
+		return float(np.mean(accuracies)) if accuracies else float('nan')
 
 	test_model.eval()
-	test_acc = []
-	test_all_label = np.zeros(1)
-	test_all_pre_label = np.zeros(1)
-	test_all_pre_proba = np.zeros((1, 3))
-	for test_img, test_label in test_loader:
-		test_img = test_img.cuda(gpu_device)
-		test_label = test_label.cuda(gpu_device)
+	train_accuracy = _mean_accuracy(train_loader)
+	val_accuracy = _mean_accuracy(val_loader)
+
+	true_labels, predicted_labels = [], []
+	test_accuracies = []
+	for images, labels in test_loader:
+		images = images.cuda(gpu_device)
+		labels = labels.cuda(gpu_device)
 		with torch.no_grad():
-			if out_mode == 'single':
-				test_pre_y = test_model(test_img)
-			elif out_mode == 'triplet':
-				_, _, test_pre_y = test_model(test_img)
-			elif out_mode == 'five':
-				_, _, test_pre_y,_,_ = test_model(test_img)
-			test_loss = loss_fn(test_pre_y, test_label)
-			test_pre_label = torch.argmax(test_pre_y, dim=1)
-			test_acc.append(accuracy_score(test_label.detach().cpu().numpy(),
-										test_pre_label.detach().cpu().numpy()))
-			test_all_label = np.concatenate((test_all_label, test_label.detach().cpu().numpy()))
-			test_all_label = test_all_label[1:]
-			test_all_pre_label = np.concatenate((test_all_pre_label, test_pre_label.detach().cpu().numpy()))
-			test_all_pre_proba = np.concatenate(
-				(test_all_pre_proba, torch.softmax(test_pre_y, dim=1).detach().cpu().numpy()))
-			test_all_pre_label = test_all_pre_label[1:]
-	test_all_proba = one_hot(org_x = test_all_label, pre_dim = 3)
-	test_all_pre_proba = one_hot(org_x= test_all_pre_label, pre_dim = 3)
+			logits = _forward(images)
+			predictions = torch.argmax(logits, dim=1)
+		labels_cpu = labels.detach().cpu().numpy()
+		predictions_cpu = predictions.detach().cpu().numpy()
+		test_accuracies.append(accuracy_score(labels_cpu, predictions_cpu))
+		true_labels.append(labels_cpu)
+		predicted_labels.append(predictions_cpu)
+
+	y_true = np.concatenate(true_labels).astype(int)
+	y_pred = np.concatenate(predicted_labels).astype(int)
+	class_count = int(max(np.max(y_true), np.max(y_pred))) + 1
+	labels = list(range(class_count))
+	class_report = classification_report(y_true, y_pred, labels=labels, digits=4, zero_division=0)
+	matrix, confusion_metrics_report = confusion_matrix_metrics(y_true, y_pred, labels=labels)
+	y_true_one_hot = one_hot(org_x=y_true, pre_dim=class_count)
+	y_pred_one_hot = one_hot(org_x=y_pred, pre_dim=class_count)
+	try:
+		test_auc = float(roc_auc_score(y_true_one_hot, y_pred_one_hot))
+	except ValueError as error:
+		test_auc = float('nan')
+		print(f'AUC unavailable: {error}')
+	test_accuracy = float(np.mean(test_accuracies)) if test_accuracies else float('nan')
 
 	print('########################## testing results #########################')
-	print('train_acc:{:.4}'.format(np.mean(train_acc)),
-		' val_acc:{:.4}'.format(np.mean(val_acc)),
-		' test_acc:{:.4}'.format(np.mean(test_acc)), '\n')
-
-	print('########################## validation set results #########################')
-	print(classification_report(val_all_label, val_all_pre_label, digits=4))
-
+	print('train_acc:{:.4f}  val_acc:{:.4f}  test_acc:{:.4f}'.format(train_accuracy, val_accuracy, test_accuracy))
 	print('########################## testing set results #########################')
-	print(classification_report(test_all_label, test_all_pre_label, digits=4))
-
+	print(class_report)
+	print('########################## confusion matrix #########################')
+	print(matrix)
+	print('########################## confusion-matrix metrics #########################')
+	print(confusion_metrics_report)
 	print('########################## auc results #########################')
-	print(roc_auc_score(test_all_proba, test_all_pre_proba))
+	print('{:.4f}'.format(test_auc))
 
-	# ##########################################Confusion Matrix###############################################
-	# y_gt = []
-	# y_pred = []
-	# for imgs, labels in test_loader:
-	# 	imgs = imgs.cuda(gpu_device)
-	# 	labels = labels.cuda(gpu_device)
-	# 	if out_mode == 'single':
-	# 		labels_pd = test_model(imgs)
-	# 	elif out_mode == 'triplet':
-	# 		_, _, labels_pd = test_model(imgs)
-	# 	elif out_mode == 'five':
-	# 		_, _, labels_pd, _, _ = test_model(imgs)
-	# 	predict_np = np.argmax(labels_pd.cpu().detach().numpy(), axis=-1)  # array([0,5,1,6,3,...],dtype=int64)
-	# 	labels_np = labels.cpu().detach().numpy()  # array([0,5,0,6,2,...],dtype=int64)
-	#
-	# 	del labels_pd
-	# 	labels_pd = None
-	# 	torch.cuda.empty_cache()
-	#
-	# 	y_pred.append(predict_np)
-	# 	y_gt.append(labels_np)
-	#
-	# result_y_pred = []
-	# for sublist in y_pred:
-	# 	result_y_pred.extend(sublist)
-	# result_y_gt = []
-	# for sublist in y_gt:
-	# 	result_y_gt.extend(sublist)
-	#
-	# draw_confusion_matrix(label_true=np.array(result_y_gt),  # y_gt=[0,5,1,6,3,...]
-	# 					  label_pred=np.array(result_y_pred),  # y_pred=[0,5,1,6,3,...]
-	# 					  label_name=["Grade I","Grade II","Grade III"],
-	# 					  title="Train Data",
-	# 					  pdf_save_path="Train Data",
-	# 					  dpi=300)
-	# ##########################################MCC################################################################
-	# mcc = matthews_corrcoef(result_y_gt, result_y_pred)
-	# print("MCC:", mcc)
-	# ##########################################kappa###############################################################
-	# kappa = cohen_kappa_score(np.array(result_y_gt).reshape(-1, 1), np.array(result_y_pred).reshape(-1, 1))
-	# print("Kappa:", kappa)
-	#
-	# ##########################################CSI###############################################################
-	# def calculate_csi(true_positives, false_positives, false_negatives):
-	# 	return true_positives / (true_positives + false_positives + false_negatives)
-	#
-	# result_y_pred = np.array(result_y_pred)
-	# result_y_gt = np.array(result_y_gt)
-	# true_positives = np.sum((result_y_pred == result_y_gt) & (result_y_pred > 0))
-	# false_positives = np.sum((result_y_pred != result_y_gt) & (result_y_pred > 0))
-	# false_negatives = np.sum((result_y_pred != result_y_gt) & (result_y_gt > 0))
-	#
-	# csi = calculate_csi(true_positives, false_positives, false_negatives)
-	# print(f"Critical Success Index (CSI): {csi}")
+	if log_path is None and weight_path:
+		log_path = os.path.splitext(weight_path)[0] + '_training_log.txt'
+	if log_path:
+		os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
+		with open(log_path, 'a', encoding='utf-8') as log_file:
+			log_file.write('########################## testing results #########################\n')
+			log_file.write('train_acc:{:.4f}  val_acc:{:.4f}  test_acc:{:.4f}\n'.format(train_accuracy, val_accuracy, test_accuracy))
+			log_file.write('########################## testing set results #########################\n')
+			log_file.write(class_report + '\n')
+			log_file.write('########################## confusion matrix #########################\n')
+			log_file.write(np.array2string(matrix) + '\n')
+			log_file.write('########################## confusion-matrix metrics #########################\n')
+			log_file.write(confusion_metrics_report + '\n')
+			log_file.write('########################## auc results #########################\n')
+			log_file.write('{:.4f}\n'.format(test_auc))
+		print(f'Confusion-matrix metrics saved to: {log_path}')
 
-import matplotlib.pyplot as plt
-from sklearn.metrics import confusion_matrix
-def draw_confusion_matrix(label_true, label_pred, label_name, title="Confusion Matrix", pdf_save_path=None, dpi=100):
+	return {
+		'test_acc': test_accuracy,
+		'test_auc': test_auc,
+		'classification_report': class_report,
+		'confusion_matrix': matrix,
+		'confusion_matrix_metrics': confusion_metrics_report,
+	}
 
-	""""@param label_true: 真实标签，比如[0,1,2,7,4,5,...]
-	@param label_pred: 预测标签，比如[0,5,4,2,1,4,...]
-	@param label_name: 标签名字，比如['cat','dog','flower',...]
-	@param title: 图标题
-	@param pdf_save_path: 是否保存，是则为保存路径pdf_save_path=xxx.png | xxx.pdf | ...等其他plt.savefig支持的保存格式
-	@param dpi: 保存到文件的分辨率，论文一般要求至少300dpi
-	@return:
-
-	example：
-			draw_confusion_matrix(label_true=y_gt,
-						  label_pred=y_pred,
-						  label_name=["Angry", "Disgust", "Fear", "Happy", "Sad", "Surprise", "Neutral"],
-						  title="Confusion Matrix on Fer2013",
-						  pdf_save_path="Confusion_Matrix_on_Fer2013.png",
-						  dpi=300)"""
-
-
-	cm = confusion_matrix(y_true=label_true, y_pred=label_pred, normalize=None)
-	plt.rcParams['font.serif'] = ['Times New Roman']
-	plt.imshow(cm, cmap='Blues')
-	plt.grid(False)
-	plt.title(title,fontsize=18)
-	plt.xlabel("Predict label",fontsize=14)
-	plt.ylabel("Truth label",fontsize=14)
-	plt.yticks(range(label_name.__len__()), label_name,fontsize=12)
-	plt.xticks(range(label_name.__len__()), label_name, rotation=15,fontsize=12)
-
-	plt.tight_layout()
-
-	plt.colorbar()
-
-	for i in range(label_name.__len__()):
-		for j in range(label_name.__len__()):
-			color = (1, 1, 1) if i == j else (0, 0, 0)  # 对角线字体白色，其他黑色
-			value = float(format('%.3f' % cm[j, i]))
-			plt.text(i, j, int(value), verticalalignment='center', horizontalalignment='center', color=color, fontsize=14)
-
-	# plt.show()
-	if not pdf_save_path is None:
-		plt.savefig(pdf_save_path, bbox_inches='tight', dpi=dpi)
 
 def testing_funnction_dis(test_model = None, train_loader=None, val_loader=None, test_loader=None, gpu_device=0,
 					  out_mode = None):
@@ -1994,6 +1927,15 @@ def cnn_lr_schedule_3(epoch):
 def vit_lr_schedule(epoch):
 	if epoch < 50:
 		lr = 1e-5
+	elif epoch < 75:
+		lr = 5e-6
+	else:
+		lr = 1e-6
+	return lr
+
+def vit_lr_greece_larynx(epoch):
+	if epoch < 50:
+		lr = 3e-5
 	elif epoch < 75:
 		lr = 5e-6
 	else:

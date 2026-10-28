@@ -1,0 +1,2 @@
+如果新建project，重新安装了fused windows（kernel文件），还是出现报错，请看swin_transformer.py文件中的import中
+的路径错了，因为不同项目的二级路径（models）名称不同，对应修改一下即可。

@@ -14,7 +14,9 @@ from utils.train_utils import train_single, train_baseline, train_moo_dis_lmmd, 
 from models.swin_transformer import swin_tiny
 from models.gcn import vig_ti_224_gelu
 from models.my_net import ViT2GNN, ViT2GNN_AAMFF, ViT2GNN_AAMFF_Dis
-from SOTA.SIL_Learning.Grad_CAM import Grad_CAM
+import warnings
+
+warnings.filterwarnings("ignore")
 
 
 def setup_seed(seed):
@@ -45,10 +47,13 @@ if __name__ == '__main__':
 	batch_size = 32
 	epochs = 100
 	image_size = 224
-	num_workers = 1
-	data_root = r'./dataset/esophageal_cancer'
-	swinT_path = r'./weight/swin_tiny_patch4_window7_224_22k.pth'
-	gcn_path = r'./weight/vig_ti_74.5.pth'
+	num_workers = 16
+	data_root = r'/root/autodl-tmp/GAFT/Datasets/Greece_Breast'
+	swinT_path = r'/root/autodl-tmp/GAFT/Results/weight/swin_tiny_patch4_window7_224_22k.pth'
+	gcn_path = r'/root/autodl-tmp/GAFT/Results/weight/vig_ti_74.5.pth'
+	model_path = r'/root/autodl-tmp/GAFT/Results/Wegt_Results/Greece_Breast/lmmd_aamff_moo_dis_loss1*fusion_loss+0.5*swint_loss+0.6*vig_loss+0.45*dis_loss_1.pth'
+	model_stat = 'test' #test, visual, train
+	image_dir = r'/data/QYB/GMamba/dataset/Breast_datasets_ST_MSLNet_Random'
 	device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 	print('########################## reading datas and processing datas #########################')
 	transform = transforms.Compose([transforms.ToTensor(), transforms.Resize([image_size, image_size], antialias=True),
@@ -84,14 +89,17 @@ if __name__ == '__main__':
 			print(fusion_net.head.weight)
 			#print(fusion_net.fusion_block_dense_1.weight)
 		fusion_net = fusion_net.to(device)
-		model_path = r'/data/QYB/ViT2GNN/result/lar/s/aamff_moo_dis_loss0.8*fusion_loss+0.8*swint_loss+0.8*vig_loss+0.25*dis_loss_4.pth'
-		net_weight = torch.load(model_path)
+
+
+	if model_stat == 'test':
+		net_weight = torch.load(model_path, map_location=device)
 		fusion_net.load_state_dict(net_weight, strict=True)
 
-		# testing_funnction(test_model=fusion_net, train_loader=train_loader, val_loader=val_loader,
-		# 				  test_loader=test_loader,
-		# 				  gpu_device=device, out_mode='five')
-		image_dir = r'/data/QYB/GMamba/dataset/Larynx_datasets_ST_MSLNet_Random'
+		testing_funnction(test_model=fusion_net, train_loader=train_loader, val_loader=val_loader,
+		 				  test_loader=test_loader, gpu_device=device, out_mode='five')
+
+	elif model_stat == 'visual':
+
 		model_name = 'Mine'  # ResNet50, DenseNet121, ResNext, ViG, Swin_T, MViT, T2T_ViT, FABNeT, ViT_AMC, Mine
 		Grade = 'III'  # I, II, III
 		datasets = 'lar'  # lar, eso
@@ -107,60 +115,35 @@ if __name__ == '__main__':
 								   training_img_path=None, result_img_path=result_img_path, map_size=[7, 7])
 
 			my_grad_cam.get_all_result_images()
-		# fusion_weight = 1
-		# swin_weight = 0.5
-		# vig_weight = 0.6
-		# dis_weight = 0.45
-		# weight_save_path = f'./result/adv/lmmd_aamff_moo_dis_loss{fusion_weight}*fusion_loss+{swin_weight}*swint_loss+{vig_weight}*vig_loss+{dis_weight}*dis_loss_{i + 1}.pth'
-		# log_file_path = f'./result/adv/lmmd_aamff_moo_dis_loss{fusion_weight}*fusion_loss+{swin_weight}*swint_loss+{vig_weight}*vig_loss_LOG+{dis_weight}*dis_loss_LOG_{i + 1}.txt'
-		#
-		# capture_1 = CapturePrint()
-		# capture_2 = CapturePrint()
-		# print_capture_1 = PrintCapture(capture_1)
-		# print_capture_2 = PrintCapture(capture_2)
-		#
-		# with contextlib.redirect_stdout(print_capture_1) as f:
-		# 	train_moo_dis_lmmd(number=i+1, net=fusion_net, train_loader=train_loader, val_loader=val_loader, test_loader=test_loader,
-		# 			fusion_weight=fusion_weight, swin_weight=swin_weight, vmamba_weight=vig_weight,gpu_device=device, epoch=epochs, weight_path=weight_save_path,
-        #                   dis_weight=dis_weight)
-		# 	train_logs = f.getvalue()
-		# with open(log_file_path, 'w') as f:
-		# 	f.write('training logs:\n')
-		# 	f.write(train_logs)
-		#
-		# with contextlib.redirect_stdout(print_capture_2) as f:
-		# 	testing_funnction(test_model=fusion_net, train_loader=train_loader, val_loader=val_loader, test_loader=test_loader,
-		# 					  gpu_device=device, out_mode='five')
-		# 	test_logs = f.getvalue()
-		# with open(log_file_path, 'a') as f:
-		# 	f.write('\ntesting logs:\n')
-		# 	f.write(test_logs)
+	elif model_stat == 'train':
 
+		fusion_weight = 1
+		swin_weight = 0.5
+		vig_weight = 0.6
+		dis_weight = 0.45
+		weight_save_path = f'/root/autodl-tmp/GAFT/Results/Wegt_Results/Greece_Breast/lmmd_aamff_moo_dis_loss{fusion_weight}*fusion_loss+{swin_weight}*swint_loss+{vig_weight}*vig_loss+{dis_weight}*dis_loss_{i + 1}.pth'
+		log_file_path = f'/root/autodl-tmp/GAFT/Results/Wegt_Results/Greece_Breast/lmmd_aamff_moo_dis_loss{fusion_weight}*fusion_loss+{swin_weight}*swint_loss+{vig_weight}*vig_loss_LOG+{dis_weight}*dis_loss_LOG_{i + 1}.txt'
 
+		capture_1 = CapturePrint()
+		capture_2 = CapturePrint()
+		print_capture_1 = PrintCapture(capture_1)
+		print_capture_2 = PrintCapture(capture_2)
 
-	"""###########################################GCN_Part################################################
-	gcn_net = vig_ti_224_gelu(class_num=class_num)
-	weight_file = torch.load(opt.gcn_path)
-	weight_file = {k: v for k, v in weight_file.items() if (k in weight_file and 'prediction.4' not in k)}
-	gcn_net.load_state_dict(weight_file, strict=False)
-	nn.init.trunc_normal_(gcn_net.prediction[4].weight, std=.02)
-	##################################Vision_Mamba_Part################################################
-	vim_net = vim_tiny_patch16_stride8_224_bimambav2_final_pool_mean_abs_pos_embed_with_midclstok_div2(class_num=3, drop_rate=0.1)
-	weight_file = torch.load(opt.vim_path)
-	weight_file = {k: v for k, v in weight_file.items() if (k in weight_file and 'head' not in k)}
-	print(weight_file)
-	vim_net.load_state_dict(weight_file['model'], strict=True)
-	nn.init.trunc_normal_(vim_net.head.weight, std=.02)
-	##################################VMamba_Part################################################
-	mamba_base = VSSM(patch_size=4, in_chans=3, num_classes=class_num, depths=[2, 2, 4, 2],
-					  dims=[96, 192, 384, 768], ssm_d_state=1, ssm_ratio=2.0, ssm_dt_rank="auto", ssm_act_layer="silu",
-					  ssm_conv=3, ssm_conv_bias=False, ssm_drop_rate=0.0, ssm_init="v0", forward_type="v3noz",
-					  mlp_ratio=4.0, mlp_act_layer="gelu", mlp_drop_rate=0.0, gmlp=False, drop_path_rate=0.2,
-					  patch_norm=True, norm_layer="LN",  # "BN", "LN2D"
-					  downsample_version="v3",  # "v1", "v2", "v3"
-					  patchembed_version="v2",  # "v1", "v2"
-					  use_checkpoint=False,
-					  )
-	weight_file = torch.load(opt.vmamba_path, map_location='cpu')["model"]
-	weight_file = {k: v for k, v in weight_file.items() if (k in weight_file and 'classifier.head' not in k)}
-	mamba_base.load_state_dict(weight_file, strict=False)"""
+		with contextlib.redirect_stdout(print_capture_1) as f:
+			train_moo_dis_lmmd(number=i+1, net=fusion_net, train_loader=train_loader, val_loader=val_loader, test_loader=test_loader,
+		 			fusion_weight=fusion_weight, swin_weight=swin_weight, vmamba_weight=vig_weight,gpu_device=device, epoch=epochs,
+					weight_path=weight_save_path, dis_weight=dis_weight)
+			train_logs = f.getvalue()
+
+		with open(log_file_path, 'w') as f:
+			f.write('training logs:\n')
+			f.write(train_logs)
+
+		with contextlib.redirect_stdout(print_capture_2) as f:
+			testing_funnction(test_model=fusion_net, train_loader=train_loader, val_loader=val_loader, test_loader=test_loader,
+		 					  gpu_device=device, out_mode='five')
+			test_logs = f.getvalue()
+
+		with open(log_file_path, 'a') as f:
+			f.write('\ntesting logs:\n')
+			f.write(test_logs)

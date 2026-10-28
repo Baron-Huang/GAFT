@@ -874,3 +874,288 @@ class ViT2GNN_AAMFF_cont(nn.Module):
 
 		fusion_out = self.fusion_fc(fusion_out)
 		return swin_t_y, vig_y, fusion_out
+
+class Concatenation_Fusion(nn.Module):
+    """Feature-level concatenation baseline for SwinT and ViG.
+
+    The two pretrained backbones generate global 768-D and 1024-D features.
+    Their features are concatenated along dim=1 and classified by a small MLP.
+    """
+    def __init__(self, swinT_base=None, vig_base=None, class_num=3, hidden_dim=512, dropout=0.2):
+        super().__init__()
+        if swinT_base is None or vig_base is None:
+            raise ValueError('swinT_base and vig_base must both be provided.')
+
+        self.swin_backbone = swinT_base
+        self.vig_stem = vig_base.stem
+        self.vig_pos_embed = vig_base.pos_embed
+        self.vig_blocks = vig_base.backbone
+        self.vig_num_blocks = vig_base.n_blocks
+        # Keep the pretrained ViG feature projection and classification head.
+        self.vig_projection = vig_base.prediction[0:3]
+        self.vig_head = vig_base.prediction[4]
+
+        swin_dim = getattr(swinT_base, 'num_features', 768)
+        vig_dim = 1024
+        self.fusion_classifier = nn.Sequential(
+            nn.Linear(swin_dim + vig_dim, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, class_num),
+        )
+        nn.init.trunc_normal_(self.fusion_classifier[0].weight, std=.02)
+        nn.init.zeros_(self.fusion_classifier[0].bias)
+        nn.init.trunc_normal_(self.fusion_classifier[3].weight, std=.02)
+        nn.init.zeros_(self.fusion_classifier[3].bias)
+
+    def _vig_features(self, x):
+        x = self.vig_stem(x) + self.vig_pos_embed
+        for index in range(self.vig_num_blocks):
+            x = self.vig_blocks[index](x)
+        x = F.adaptive_avg_pool2d(x, 1)
+        return torch.flatten(self.vig_projection(x), 1)
+
+    def forward(self, x):
+        swin_features = self.swin_backbone.forward_features(x)
+        swin_logits = self.swin_backbone.head(swin_features)
+
+        vig_features = self._vig_features(x)
+        vig_logits = self.vig_head(vig_features.unsqueeze(-1).unsqueeze(-1)).squeeze(-1).squeeze(-1)
+
+        fused_features = torch.cat((swin_features, vig_features), dim=1)
+        fusion_logits = self.fusion_classifier(fused_features)
+        return swin_logits, vig_logits, fusion_logits
+
+
+class Cross_Attetion_Fusion(nn.Module):
+    """Token-level cross-attention fusion baseline for SwinT and ViG.
+
+    SwinT final tokens are queries; projected ViG final tokens are keys and values.
+    """
+    def __init__(self, swinT_base=None, vig_base=None, class_num=3, num_heads=8, dropout=0.2):
+        super().__init__()
+        if swinT_base is None or vig_base is None:
+            raise ValueError('swinT_base and vig_base must both be provided.')
+
+        self.swin_backbone = swinT_base
+        self.vig_stem = vig_base.stem
+        self.vig_pos_embed = vig_base.pos_embed
+        self.vig_blocks = vig_base.backbone
+        self.vig_num_blocks = vig_base.n_blocks
+        self.vig_projection = vig_base.prediction[0:3]
+        self.vig_head = vig_base.prediction[4]
+
+        swin_dim = getattr(swinT_base, 'num_features', 768)
+        self.vig_to_swin = nn.Linear(1024, swin_dim)
+        self.cross_attention = nn.MultiheadAttention(
+            embed_dim=swin_dim, num_heads=num_heads, dropout=dropout, batch_first=True
+        )
+        self.cross_norm = nn.LayerNorm(swin_dim)
+        self.fusion_classifier = nn.Sequential(
+            nn.Linear(swin_dim, swin_dim // 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(swin_dim // 2, class_num),
+        )
+        for layer in (self.vig_to_swin, self.fusion_classifier[0], self.fusion_classifier[3]):
+            nn.init.trunc_normal_(layer.weight, std=.02)
+            if layer.bias is not None:
+                nn.init.zeros_(layer.bias)
+
+    def _swin_tokens(self, x):
+        x = self.swin_backbone.patch_embed(x)
+        if self.swin_backbone.ape:
+            x = x + self.swin_backbone.absolute_pos_embed
+        x = self.swin_backbone.pos_drop(x)
+        for layer in self.swin_backbone.layers:
+            x = layer(x)
+        return self.swin_backbone.norm(x)
+
+    def _vig_feature_map(self, x):
+        x = self.vig_stem(x) + self.vig_pos_embed
+        for index in range(self.vig_num_blocks):
+            x = self.vig_blocks[index](x)
+        return x
+
+    def _vig_features(self, feature_map):
+        feature_map = F.adaptive_avg_pool2d(feature_map, 1)
+        return torch.flatten(self.vig_projection(feature_map), 1)
+
+    def _vig_tokens(self, feature_map):
+        # 14x14 ViG features are pooled to 7x7, matching SwinT's 49 final tokens.
+        feature_map = F.adaptive_avg_pool2d(feature_map, (7, 7))
+        feature_map = self.vig_projection(feature_map)
+        return feature_map.flatten(2).transpose(1, 2)
+
+    def forward(self, x):
+        swin_tokens = self._swin_tokens(x)
+        swin_features = swin_tokens.mean(dim=1)
+        swin_logits = self.swin_backbone.head(swin_features)
+
+        vig_feature_map = self._vig_feature_map(x)
+        vig_features = self._vig_features(vig_feature_map)
+        vig_logits = self.vig_head(vig_features.unsqueeze(-1).unsqueeze(-1)).squeeze(-1).squeeze(-1)
+
+        vig_tokens = self.vig_to_swin(self._vig_tokens(vig_feature_map))
+        attended_tokens, _ = self.cross_attention(
+            query=swin_tokens, key=vig_tokens, value=vig_tokens, need_weights=False
+        )
+        fused_features = self.cross_norm(swin_tokens + attended_tokens).mean(dim=1)
+        fusion_logits = self.fusion_classifier(fused_features)
+        return swin_logits, vig_logits, fusion_logits
+
+
+# Correctly spelled alias for use in external code.
+Cross_Attention_Fusion = Cross_Attetion_Fusion
+
+class Late_Fusion(nn.Module):
+    """Logit-level late fusion baseline for SwinT and ViG.
+
+    Each pretrained backbone makes an independent class prediction.  A learned,
+    softmax-normalized pair of global weights combines their logits, which keeps
+    the fusion decision transparent while avoiding intermediate-feature fusion.
+    """
+    def __init__(self, swinT_base=None, vig_base=None, class_num=3):
+        super().__init__()
+        if swinT_base is None or vig_base is None:
+            raise ValueError('swinT_base and vig_base must both be provided.')
+
+        self.swin_backbone = swinT_base
+        self.vig_stem = vig_base.stem
+        self.vig_pos_embed = vig_base.pos_embed
+        self.vig_blocks = vig_base.backbone
+        self.vig_num_blocks = vig_base.n_blocks
+        self.vig_projection = vig_base.prediction[0:3]
+        self.vig_head = vig_base.prediction[4]
+        self.class_num = class_num
+        # Equal initial contribution; weights are learned from the training data.
+        self.fusion_weights = nn.Parameter(torch.zeros(2))
+
+    def _vig_logits(self, x):
+        x = self.vig_stem(x) + self.vig_pos_embed
+        for index in range(self.vig_num_blocks):
+            x = self.vig_blocks[index](x)
+        x = F.adaptive_avg_pool2d(x, 1)
+        x = self.vig_projection(x)
+        return self.vig_head(x).squeeze(-1).squeeze(-1)
+
+    def forward(self, x):
+        swin_features = self.swin_backbone.forward_features(x)
+        swin_logits = self.swin_backbone.head(swin_features)
+        vig_logits = self._vig_logits(x)
+        weights = torch.softmax(self.fusion_weights, dim=0)
+        fusion_logits = weights[0] * swin_logits + weights[1] * vig_logits
+        return swin_logits, vig_logits, fusion_logits
+
+class Weighted_Summation(nn.Module):
+    """Feature-level weighted-summation baseline for SwinT and ViG.
+
+    The two global embeddings are projected to a shared space, normalized, and
+    combined using learned softmax weights before a final classifier.
+    """
+    def __init__(self, swinT_base=None, vig_base=None, class_num=3, fusion_dim=512, dropout=0.2):
+        super().__init__()
+        if swinT_base is None or vig_base is None:
+            raise ValueError('swinT_base and vig_base must both be provided.')
+
+        self.swin_backbone = swinT_base
+        self.vig_stem = vig_base.stem
+        self.vig_pos_embed = vig_base.pos_embed
+        self.vig_blocks = vig_base.backbone
+        self.vig_num_blocks = vig_base.n_blocks
+        self.vig_projection = vig_base.prediction[0:3]
+        self.vig_head = vig_base.prediction[4]
+
+        swin_dim = getattr(swinT_base, 'num_features', 768)
+        self.swin_projector = nn.Sequential(nn.Linear(swin_dim, fusion_dim), nn.LayerNorm(fusion_dim))
+        self.vig_projector = nn.Sequential(nn.Linear(1024, fusion_dim), nn.LayerNorm(fusion_dim))
+        self.fusion_weights = nn.Parameter(torch.zeros(2))
+        self.fusion_classifier = nn.Sequential(
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(fusion_dim, class_num),
+        )
+        for layer in (self.swin_projector[0], self.vig_projector[0], self.fusion_classifier[2]):
+            nn.init.trunc_normal_(layer.weight, std=.02)
+            nn.init.zeros_(layer.bias)
+
+    def _vig_features(self, x):
+        x = self.vig_stem(x) + self.vig_pos_embed
+        for index in range(self.vig_num_blocks):
+            x = self.vig_blocks[index](x)
+        x = F.adaptive_avg_pool2d(x, 1)
+        return torch.flatten(self.vig_projection(x), 1)
+
+    def forward(self, x):
+        swin_features = self.swin_backbone.forward_features(x)
+        swin_logits = self.swin_backbone.head(swin_features)
+        vig_features = self._vig_features(x)
+        vig_logits = self.vig_head(vig_features.unsqueeze(-1).unsqueeze(-1)).squeeze(-1).squeeze(-1)
+
+        weights = torch.softmax(self.fusion_weights, dim=0)
+        fused_features = (weights[0] * self.swin_projector(swin_features)
+                          + weights[1] * self.vig_projector(vig_features))
+        fusion_logits = self.fusion_classifier(fused_features)
+        return swin_logits, vig_logits, fusion_logits
+
+class Gated_Fusion(nn.Module):
+    """Sample-adaptive gated feature fusion baseline for SwinT and ViG.
+
+    A sigmoid gate generated from both projected embeddings decides, separately
+    for every sample and feature dimension, how much to retain from each branch.
+    """
+    def __init__(self, swinT_base=None, vig_base=None, class_num=3, fusion_dim=512, dropout=0.2):
+        super().__init__()
+        if swinT_base is None or vig_base is None:
+            raise ValueError('swinT_base and vig_base must both be provided.')
+
+        self.swin_backbone = swinT_base
+        self.vig_stem = vig_base.stem
+        self.vig_pos_embed = vig_base.pos_embed
+        self.vig_blocks = vig_base.backbone
+        self.vig_num_blocks = vig_base.n_blocks
+        self.vig_projection = vig_base.prediction[0:3]
+        self.vig_head = vig_base.prediction[4]
+
+        swin_dim = getattr(swinT_base, 'num_features', 768)
+        self.swin_projector = nn.Sequential(nn.Linear(swin_dim, fusion_dim), nn.LayerNorm(fusion_dim))
+        self.vig_projector = nn.Sequential(nn.Linear(1024, fusion_dim), nn.LayerNorm(fusion_dim))
+        self.gate_network = nn.Sequential(
+            nn.Linear(fusion_dim * 2, fusion_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(fusion_dim, fusion_dim),
+            nn.Sigmoid(),
+        )
+        self.fusion_classifier = nn.Sequential(
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(fusion_dim, class_num),
+        )
+        for layer in (self.swin_projector[0], self.vig_projector[0],
+                      self.gate_network[0], self.gate_network[3], self.fusion_classifier[2]):
+            nn.init.trunc_normal_(layer.weight, std=.02)
+            nn.init.zeros_(layer.bias)
+
+    def _vig_features(self, x):
+        x = self.vig_stem(x) + self.vig_pos_embed
+        for index in range(self.vig_num_blocks):
+            x = self.vig_blocks[index](x)
+        x = F.adaptive_avg_pool2d(x, 1)
+        return torch.flatten(self.vig_projection(x), 1)
+
+    def forward(self, x, return_gate=False):
+        swin_features = self.swin_backbone.forward_features(x)
+        swin_logits = self.swin_backbone.head(swin_features)
+        vig_features = self._vig_features(x)
+        vig_logits = self.vig_head(vig_features.unsqueeze(-1).unsqueeze(-1)).squeeze(-1).squeeze(-1)
+
+        swin_projected = self.swin_projector(swin_features)
+        vig_projected = self.vig_projector(vig_features)
+        gate = self.gate_network(torch.cat((swin_projected, vig_projected), dim=1))
+        fused_features = gate * swin_projected + (1.0 - gate) * vig_projected
+        fusion_logits = self.fusion_classifier(fused_features)
+        if return_gate:
+            return swin_logits, vig_logits, fusion_logits, gate
+        return swin_logits, vig_logits, fusion_logits
+
